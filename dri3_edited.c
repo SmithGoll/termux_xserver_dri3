@@ -199,7 +199,7 @@ dri3_extension_init(void)
     if (init_dri3(screenInfo.screens[0]))
         goto bail;
 
-    ErrorF("DRI3 enable successfully\n");
+    ErrorF("DRI3 enabled\n");
     return;
 
 bail:
