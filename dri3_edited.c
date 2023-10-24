@@ -31,7 +31,6 @@
 #define dri3_wrap(priv, real, mem, func) { priv = real->mem; real->mem = func; }
 #define dri3_unwrap(priv, real, mem) { real->mem = priv; }
 
-static ScreenPtr pScreenPtr = NULL;
 static DestroyPixmapProcPtr destoryPixmap = NULL;
 static DevPrivateKeyRec loriePixmapPrivateKeyRec;
 
@@ -48,9 +47,9 @@ lorieDestroyPixmap(PixmapPtr pPixmap) {
         size = pPixmap->devKind * pPixmap->drawable.height;
     }
 
-    dri3_unwrap(destoryPixmap, pScreenPtr, DestroyPixmap)
-    ret = (*pScreenPtr->DestroyPixmap) (pPixmap);
-    dri3_wrap(destoryPixmap, pScreenPtr, DestroyPixmap, lorieDestroyPixmap)
+    dri3_unwrap(destoryPixmap, pPixmap->drawable.pScreen, DestroyPixmap)
+    ret = (*pPixmap->drawable.pScreen->DestroyPixmap) (pPixmap);
+    dri3_wrap(destoryPixmap, pPixmap->drawable.pScreen, DestroyPixmap, lorieDestroyPixmap)
 
     if (ptr)
         munmap(ptr, size);
