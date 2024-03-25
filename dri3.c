@@ -162,21 +162,6 @@ void
 dri3_extension_init(void)
 {
     ExtensionEntry *extension;
-    int i;
-
-    dri3_screen_generation = serverGeneration;
-    /* If no screens support DRI3, there's no point offering the
-     * extension at all
-     */
-    /*if (dri3_screen_generation != serverGeneration)
-    {
-        ErrorF("[DRI3]Failed: if (dri3_screen_generation != serverGeneration)\n"
-               "dri3_screen_generation: %d\n"
-               "serverGeneration: %d\n",
-               dri3_screen_generation,
-               serverGeneration);
-        //return;
-    }*/
 
 #ifdef PANORAMIX
     if (!noPanoramiXExtension)
