@@ -1,0 +1,150 @@
+--- dri3/dri.c.orig	2024-03-25 08:31:49.787969234 +0000
++++ dri3/dri3.c	2024-03-25 10:02:57.074446351 +0000
+@@ -24,6 +24,101 @@
+ 
+ #include <drm_fourcc.h>
+ 
++#include <sys/mman.h>
++#include "fb.h"
++
++#define unused __attribute__((unused))
++#define dri3_wrap(priv, real, mem, func) { priv = real->mem; real->mem = func; }
++#define dri3_unwrap(priv, real, mem) { real->mem = priv; }
++
++static ScreenPtr pScreenPtr = NULL;
++static DestroyPixmapProcPtr destoryPixmap = NULL;
++static DevPrivateKeyRec loriePixmapPrivateKeyRec;
++
++static Bool FalseNoop() { return FALSE; }
++
++static Bool
++lorieDestroyPixmap(PixmapPtr pPixmap) {
++    Bool ret;
++    void *ptr = NULL;
++    size_t size = 0;
++
++    if (pPixmap->refcnt == 1) {
++        ptr = dixLookupPrivate(&pPixmap->devPrivates, &loriePixmapPrivateKeyRec);
++        size = pPixmap->devKind * pPixmap->drawable.height;
++    }
++
++    dri3_unwrap(destoryPixmap, pScreenPtr, DestroyPixmap)
++    ret = (*pScreenPtr->DestroyPixmap) (pPixmap);
++    dri3_wrap(destoryPixmap, pScreenPtr, DestroyPixmap, lorieDestroyPixmap)
++
++    if (ptr)
++        munmap(ptr, size);
++    return ret;
++}
++
++static PixmapPtr
++loriePixmapFromFds(ScreenPtr screen, CARD8 num_fds, const int *fds, CARD16 width, CARD16 height,
++                                    const CARD32 *strides, const CARD32 *offsets, CARD8 depth, unused CARD8 bpp, CARD64 modifier) {
++    const CARD64 RAW_MMAPPABLE_FD = 1274;
++    PixmapPtr pixmap;
++    void *addr = NULL;
++    if (num_fds != 1 || modifier != RAW_MMAPPABLE_FD) {
++        ErrorF("DRI3: More than 1 fd or modifier is not RAW_MMAPPABLE_FD");
++        return NULL;
++    }
++
++    addr = mmap(NULL, strides[0] * height, PROT_READ, MAP_SHARED, fds[0], offsets[0]);
++    if (!addr || addr == MAP_FAILED) {
++        ErrorF("DRI3: mmap failed");
++        return NULL;
++    }
++
++    pixmap = screen->CreatePixmap(screen, 0, 0, depth, 0);
++    if (!pixmap) {
++        ErrorF("DRI3: failed to create pixmap");
++        munmap(addr, strides[0] * height);
++        return NULL;
++    }
++
++    dixSetPrivate(&pixmap->devPrivates, &loriePixmapPrivateKeyRec, addr);
++    screen->ModifyPixmapHeader(pixmap, width, height, 0, 0, strides[0], addr);
++
++    return pixmap;
++}
++
++static int
++lorieGetFormats(unused ScreenPtr screen, CARD32 *num_formats, CARD32 **formats) {
++    *num_formats = 0;
++    *formats = NULL;
++    return TRUE;
++}
++
++static int
++lorieGetModifiers(unused ScreenPtr screen, unused uint32_t format, uint32_t *num_modifiers, uint64_t **modifiers) {
++    *num_modifiers = 0;
++    *modifiers = NULL;
++    return TRUE;
++}
++
++static dri3_screen_info_rec dri3Info = {
++            .version = 2,
++            .fds_from_pixmap = FalseNoop,
++            .pixmap_from_fds = loriePixmapFromFds,
++            .get_formats = lorieGetFormats,
++            .get_modifiers = lorieGetModifiers,
++            .get_drawable_modifiers = FalseNoop
++};
++
++static Bool
++init_dri3(ScreenPtr screen) {
++    pScreenPtr = screen;
++    dri3_wrap(destoryPixmap, screen, DestroyPixmap, lorieDestroyPixmap)
++    return (!dri3_screen_init(screen, &dri3Info) ||
++           !dixRegisterPrivateKey(&loriePixmapPrivateKeyRec, PRIVATE_PIXMAP, 0));
++}
++
++
+ static int dri3_request;
+ DevPrivateKeyRec dri3_screen_private_key;
+ 
+@@ -69,15 +164,23 @@
+     ExtensionEntry *extension;
+     int i;
+ 
++    dri3_screen_generation = serverGeneration;
+     /* If no screens support DRI3, there's no point offering the
+      * extension at all
+      */
+-    if (dri3_screen_generation != serverGeneration)
+-        return;
++    /*if (dri3_screen_generation != serverGeneration)
++    {
++        ErrorF("[DRI3]Failed: if (dri3_screen_generation != serverGeneration)\n"
++               "dri3_screen_generation: %d\n"
++               "serverGeneration: %d\n",
++               dri3_screen_generation,
++               serverGeneration);
++        //return;
++    }*/
+ 
+ #ifdef PANORAMIX
+     if (!noPanoramiXExtension)
+-        return;
++        FatalError("[DRI3]Failed: if (!noPanoramiXExtension)\n");
+ #endif
+ 
+     extension = AddExtension(DRI3_NAME, DRI3NumberEvents, DRI3NumberErrors,
+@@ -88,10 +191,15 @@
+ 
+     dri3_request = extension->base;
+ 
+-    for (i = 0; i < screenInfo.numScreens; i++) {
+-        if (!dri3_screen_init(screenInfo.screens[i], NULL))
+-            goto bail;
++    if (screenInfo.numScreens != 1)
++    {
++        ErrorF("[DRI3]Multi-screen isn't supported\n");
++        goto bail;
+     }
++    if (init_dri3(screenInfo.screens[0]))
++        goto bail;
++
++    ErrorF("DRI3 enable successfully\n");
+     return;
+ 
+ bail:
